@@ -1,83 +1,72 @@
 import telebot
 import json
 import os
-from flask import Flask, request
-from telebot.types import Message
+from telebot import types
 
 API_TOKEN = os.environ.get("API_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID"))
+DB_PATH = "database.json"
 
 bot = telebot.TeleBot(API_TOKEN)
-server = Flask(__name__)
-
-DB_PATH = "database.json"
-if not os.path.exists(DB_PATH):
-    with open(DB_PATH, 'w', encoding='utf-8') as f:
-        json.dump({}, f, ensure_ascii=False)
 
 def load_db():
+    if not os.path.exists(DB_PATH):
+        return {}
     with open(DB_PATH, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-def save_db(data):
+def save_db(db):
     with open(DB_PATH, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(db, f, ensure_ascii=False, indent=2)
 
-# ===================== Обработка загрузки файлов =========================
+database = load_db()
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "Привет! Напиши название принта или пришли файл, чтобы добавить его в базу.")
+
 @bot.message_handler(content_types=['document'])
-def handle_doc(msg: Message):
-    if msg.from_user.id != OWNER_ID:
-        bot.reply_to(msg, "⛔ Только админ может загружать принты.")
+def handle_doc(message):
+    user_id = message.from_user.id
+    file_name = message.document.file_name
+    file_id = message.document.file_id
+
+    if user_id != OWNER_ID:
+        bot.reply_to(message, "Извините, только админ может загружать новые принты.")
         return
 
-    file_name = msg.document.file_name
-    file_id = msg.document.file_id
-
-    db = load_db()
-    if file_name in db:
-        bot.send_message(msg.chat.id, f"⚠️ Такой принт уже есть: `{file_name}`. Заменить?", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, lambda m: confirm_replace(m, file_name, file_id))
+    if file_name in database:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("Заменить", callback_data=f"replace:{file_name}:{file_id}"))
+        markup.add(types.InlineKeyboardButton("Пропустить", callback_data="skip"))
+        bot.send_message(user_id, f"⚠️ Принт с именем {file_name} уже существует. Заменить?", reply_markup=markup)
     else:
-        db[file_name] = file_id
-        save_db(db)
-        bot.send_message(msg.chat.id, f"✅ Добавлен новый принт: `{file_name}`", parse_mode="Markdown")
+        database[file_name] = file_id
+        save_db(database)
+        bot.send_message(user_id, f"✅ Принт добавлен:\n📄 {file_name}\n🆔 {file_id}")
 
-def confirm_replace(msg, file_name, new_file_id):
-    text = msg.text.lower()
-    if text in ["да", "заменить", "yes"]:
-        db = load_db()
-        db[file_name] = new_file_id
-        save_db(db)
-        bot.send_message(msg.chat.id, f"♻️ Принт `{file_name}` заменён.", parse_mode="Markdown")
-    else:
-        bot.send_message(msg.chat.id, "❌ Замена отменена.")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("replace") or call.data == "skip")
+def callback_handler(call):
+    if call.data == "skip":
+        bot.answer_callback_query(call.id, "Пропущено")
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        return
 
-# ===================== Поиск по названию =========================
-@bot.message_handler(func=lambda msg: True)
-def search_print(msg: Message):
-    query = msg.text.lower().replace(".png", "").replace("_б", "")
-    db = load_db()
+    _, file_name, file_id = call.data.split(":")
+    database[file_name] = file_id
+    save_db(database)
+    bot.edit_message_text(f"✅ Обновлено:\n📄 {file_name}\n🆔 {file_id}", call.message.chat.id, call.message.message_id)
 
-    matches = [name for name in db if query in name.lower()]
+@bot.message_handler(func=lambda msg: True, content_types=['text'])
+def handle_search(message):
+    query = message.text.strip()
+    matches = [name for name in database if query.lower() in name.lower()]
     if not matches:
-        bot.send_message(msg.chat.id, "😕 Принт не найден. Попробуй другое слово.")
+        bot.reply_to(message, "😕 Принт не найден. Попробуй другое слово.")
         return
 
     for name in matches:
-        bot.send_document(msg.chat.id, db[name], caption=name)
+        bot.send_document(message.chat.id, database[name], caption=name)
 
-# ===================== Flask Webhook =========================
-@server.route(f"/{API_TOKEN}", methods=['POST'])
-def webhook():
-    json_str = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "!", 200
-
-@server.route("/")
-def index():
-    return "Бот работает ✅"
-
-# ===================== Webhook init =========================
-if __name__ == "__main__":
-    bot.polling(none_stop=True)
+print("Бот запущен...")
+bot.infinity_polling()
