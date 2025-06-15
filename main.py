@@ -1,84 +1,84 @@
-from telebot import TeleBot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
-import sqlite3
+import telebot
+import json
+import os
+from telebot import types
 
-TOKEN = '7237914704:AAGCgfYcBvNurGqC4Q1ZjFYdNZLbZdVKZ_I'
-bot = TeleBot(TOKEN)
+# 🔐 Укажи свой Telegram ID (только ты можешь загружать файлы)
+OWNER_ID = 123456789  # <-- замени на свой Telegram user_id
+TOKEN = 'ВАШ_ТОКЕН_ТУТ'
+DB_PATH = 'database.json'
 
-# Категории принтов
-categories = {
-    "🏋️‍♂️ Спортзал": "Принты на тему спортзала 💪",
-    "👨‍💼 Офис": "Принты для офисной жизни 🖇️",
-    "🍉 Лето": "Шашлыки, пиво, жара ☀️",
-    "🎩 Барбершоп": "Мужской стиль и борода ✂️",
-    "💅 Красота": "Маникюр, реснички, сияем ✨"
-}
+bot = telebot.TeleBot(TOKEN)
+database = {}
 
-# Инициализация базы
-conn = sqlite3.connect("printbase.db", check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS prints (
-    name TEXT PRIMARY KEY,
-    file_id TEXT
-)
-""")
-conn.commit()
+# Загрузка базы
+if os.path.exists(DB_PATH):
+    with open(DB_PATH, 'r', encoding='utf-8') as f:
+        database = json.load(f)
 
-# Хендлер стартового меню
-@bot.message_handler(commands=['start'])
-def start_handler(message):
-    markup = ReplyKeyboardMarkup(resize_keyboard=True)
-    for name in categories:
-        markup.add(KeyboardButton(name))
-    bot.send_message(message.chat.id, "Привет! Выбери категорию принтов:", reply_markup=markup)
+# Сохранение базы
+def save_database():
+    with open(DB_PATH, 'w', encoding='utf-8') as f:
+        json.dump(database, f, ensure_ascii=False, indent=2)
 
-# Ответ по категориям
-@bot.message_handler(func=lambda m: m.text in categories)
-def category_handler(message):
-    bot.send_message(message.chat.id, categories[message.text])
+# Фильтрация по ключевым словам
+def find_prints_by_query(query):
+    query = query.lower().replace(' ', '').replace('_', '')
+    return {
+        name: file_id
+        for name, file_id in database.items()
+        if query in name.lower().replace('_', '').replace(' ', '')
+    }
 
-# Добавление принтов по пересылке
 @bot.message_handler(content_types=['document'])
-def add_file(message):
-    file_name = message.document.file_name
-    file_id = message.document.file_id
-    cursor.execute("SELECT file_id FROM prints WHERE name = ?", (file_name,))
-    row = cursor.fetchone()
+def handle_file(message):
+    user_id = message.from_user.id
+    file_info = message.document
+    file_name = file_info.file_name
+    file_id = file_info.file_id
 
-    if row:
-        markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add("🔁 Заменить", "⏭ Пропустить")
-        bot.send_message(message.chat.id, f"⚠️ Принт уже есть: {file_name}\nЗаменить?", reply_markup=markup)
+    if user_id != OWNER_ID:
+        bot.reply_to(message, "⛔️ Только администратор может загружать файлы.")
+        return
 
-        @bot.message_handler(func=lambda m: m.text in ["🔁 Заменить", "⏭ Пропустить"])
-        def handle_choice(choice):
-            if choice.text == "🔁 Заменить":
-                cursor.execute("UPDATE prints SET file_id = ? WHERE name = ?", (file_id, file_name))
-                conn.commit()
-                bot.send_message(message.chat.id, f"🔄 Обновлён: {file_name}")
-            else:
-                bot.send_message(message.chat.id, "⏭ Пропущено")
+    if file_name in database:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("✅ Заменить", callback_data=f"replace|{file_name}|{file_id}"),
+            types.InlineKeyboardButton("❌ Пропустить", callback_data="skip")
+        )
+        bot.reply_to(message, f"⚠️ Принт с именем {file_name} уже существует. Что делать?", reply_markup=markup)
     else:
-        cursor.execute("INSERT INTO prints (name, file_id) VALUES (?, ?)", (file_name, file_id))
-        conn.commit()
-        bot.send_message(message.chat.id, f"✅ Получено:\n📄 {file_name}\n🆔 {file_id}")
+        database[file_name] = file_id
+        save_database()
+        bot.reply_to(message, f"✅ Принт сохранён:\n📄 {file_name}")
 
-# Поиск по ключевым словам
-@bot.message_handler(func=lambda m: True)
-def search_prints(message):
-    query = message.text.lower().replace(" ", "").replace("_", "")
-    cursor.execute("SELECT name, file_id FROM prints")
-    results = []
-    for name, file_id in cursor.fetchall():
-        simplified = name.lower().replace(" ", "").replace("_", "")
-        if query in simplified:
-            results.append((name, file_id))
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    if call.from_user.id != OWNER_ID:
+        bot.answer_callback_query(call.id, "⛔️ Недостаточно прав.", show_alert=True)
+        return
 
+    if call.data.startswith("replace"):
+        _, file_name, file_id = call.data.split('|')
+        database[file_name] = file_id
+        save_database()
+        bot.edit_message_text(chat_id=call.message.chat.id,
+                              message_id=call.message.message_id,
+                              text=f"✅ Заменено: {file_name}")
+    elif call.data == "skip":
+        bot.edit_message_text(chat_id=call.message.chat.id,
+                              message_id=call.message.message_id,
+                              text=f"❌ Пропущено")
+
+@bot.message_handler(func=lambda message: True)
+def handle_search(message):
+    results = find_prints_by_query(message.text)
     if results:
-        for name, file_id in results:
+        for name, file_id in results.items():
             bot.send_document(message.chat.id, file_id, caption=name)
     else:
-        bot.send_message(message.chat.id, "🤔 Принт не найден. Попробуй другое слово.")
+        bot.reply_to(message, "😕 Ничего не найдено по запросу")
 
-bot.polling()
+print("Бот запущен...")
+bot.infinity_polling()
