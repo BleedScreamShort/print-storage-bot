@@ -1,72 +1,63 @@
-import telebot
-import json
 import os
-from telebot import types
+import json
+from flask import Flask, request
+import telebot
+from telebot.types import Message
 
 API_TOKEN = os.environ.get("API_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID"))
-DB_PATH = "database.json"
 
 bot = telebot.TeleBot(API_TOKEN)
+server = Flask(__name__)
+
+DB_PATH = "database.json"
+if not os.path.exists(DB_PATH):
+    with open(DB_PATH, 'w', encoding='utf-8') as f:
+        json.dump({}, f, ensure_ascii=False)
 
 def load_db():
-    if not os.path.exists(DB_PATH):
-        return {}
     with open(DB_PATH, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-def save_db(db):
+def save_db(data):
     with open(DB_PATH, 'w', encoding='utf-8') as f:
-        json.dump(db, f, ensure_ascii=False, indent=2)
-
-database = load_db()
-
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "Привет! Напиши название принта или пришли файл, чтобы добавить его в базу.")
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 @bot.message_handler(content_types=['document'])
-def handle_doc(message):
-    user_id = message.from_user.id
-    file_name = message.document.file_name
-    file_id = message.document.file_id
-
-    if user_id != OWNER_ID:
-        bot.reply_to(message, "Извините, только админ может загружать новые принты.")
+def handle_doc(msg: Message):
+    if msg.from_user.id != OWNER_ID:
         return
 
-    if file_name in database:
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("Заменить", callback_data=f"replace:{file_name}:{file_id}"))
-        markup.add(types.InlineKeyboardButton("Пропустить", callback_data="skip"))
-        bot.send_message(user_id, f"⚠️ Принт с именем {file_name} уже существует. Заменить?", reply_markup=markup)
-    else:
-        database[file_name] = file_id
-        save_db(database)
-        bot.send_message(user_id, f"✅ Принт добавлен:\n📄 {file_name}\n🆔 {file_id}")
+    file_info = bot.get_file(msg.document.file_id)
+    file = bot.download_file(file_info.file_path)
+    db = load_db()
+    db[msg.document.file_name] = msg.document.file_id
+    save_db(db)
+    bot.reply_to(msg, f"✅ Получено:\n📄 {msg.document.file_name}\n🆔 `{msg.document.file_id}`", parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("replace") or call.data == "skip")
-def callback_handler(call):
-    if call.data == "skip":
-        bot.answer_callback_query(call.id, "Пропущено")
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        return
-
-    _, file_name, file_id = call.data.split(":")
-    database[file_name] = file_id
-    save_db(database)
-    bot.edit_message_text(f"✅ Обновлено:\n📄 {file_name}\n🆔 {file_id}", call.message.chat.id, call.message.message_id)
-
-@bot.message_handler(func=lambda msg: True, content_types=['text'])
-def handle_search(message):
-    query = message.text.strip()
-    matches = [name for name in database if query.lower() in name.lower()]
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def search_file(msg: Message):
+    db = load_db()
+    name = msg.text.strip()
+    matches = {k: v for k, v in db.items() if name.lower() in k.lower()}
     if not matches:
-        bot.reply_to(message, "😕 Принт не найден. Попробуй другое слово.")
-        return
+        bot.send_message(msg.chat.id, "🤔 Принт не найден. Попробуй другое слово.")
+    else:
+        for filename, file_id in matches.items():
+            bot.send_document(msg.chat.id, file_id, caption=filename)
 
-    for name in matches:
-        bot.send_document(message.chat.id, database[name], caption=name)
+@server.route(f"/{API_TOKEN}", methods=["POST"])
+def webhook():
+    update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "!", 200
 
-print("Бот запущен...")
-bot.infinity_polling()
+@server.route("/", methods=["GET"])
+def index():
+    return "Бот работает ✅"
+
+if __name__ == "__main__":
+    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{API_TOKEN}"
+    bot.remove_webhook()
+    bot.set_webhook(url=webhook_url)
+    server.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
