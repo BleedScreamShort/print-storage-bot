@@ -2,7 +2,7 @@ from telebot import TeleBot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 import sqlite3
 
-TOKEN = 'ТВОЙ_ТОКЕН'
+TOKEN = '7237914704:AAGCgfYcBvNurGqC4Q1ZjFYdNZLbZdVKZ_I'
 bot = TeleBot(TOKEN)
 
 # Категории принтов
