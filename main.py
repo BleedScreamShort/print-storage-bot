@@ -4,8 +4,8 @@ import os
 from flask import Flask, request
 from telebot.types import Message
 
-API_TOKEN = os.environ.get("7237914704:AAGCgfYcBvNurGqC4Q1ZjFYdNZLbZdVKZ_I")  # Секретный токен из переменной среды
-OWNER_ID = int(os.environ.get("289808357"))  # ID владельца, только он может загружать принты
+API_TOKEN = os.environ.get("7237914704:AAGCgfYcBvNurGqC4Q1ZjFYdNZLbZdVKZ_I")
+OWNER_ID = int(os.environ.get("289808357"))
 
 bot = telebot.TeleBot(API_TOKEN)
 server = Flask(__name__)
