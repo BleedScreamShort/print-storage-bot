@@ -1,7 +1,7 @@
 from telebot import TeleBot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 
-TOKEN = 'ТВОЙ_ТОКЕН_ОТСЮДА_ПОДСТАВЬ'  # вставь свой токен от BotFather
+TOKEN = '7237914704:AAGCgfYcBvNurGqC4Q1ZjFYdNZLbZdVKZ_I'
 bot = TeleBot(TOKEN)
 
 categories = {
