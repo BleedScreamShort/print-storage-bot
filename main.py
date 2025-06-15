@@ -4,7 +4,7 @@ import os
 from flask import Flask, request
 from telebot.types import Message
 
-API_TOKEN = os.environ.get("7237914704:AAGCgfYcBvNurGqC4Q1ZjFYdNZLbZdVKZ_I")
+API_TOKEN = os.environ.get("API_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID"))
 
 bot = telebot.TeleBot(API_TOKEN)
