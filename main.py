@@ -80,7 +80,7 @@ def index():
 
 # ===================== Webhook init =========================
 if __name__ == "__main__":
-    webhook_url = os.environ.get("RENDER_EXTERNAL_URL") + API_TOKEN
+    webhook_url = os.environ.get("https://print-storage-bot.onrender.com") + API_TOKEN
     bot.remove_webhook()
     bot.set_webhook(url=webhook_url)
     server.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
